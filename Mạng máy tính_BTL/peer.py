@@ -83,6 +83,10 @@ class Peer():
            thread.start()  
            
     def handle_peer(self, connection, address):
+        """
+        to handle request of another host(tracker or peer)
+        recieve -> process message -> action
+        """
         print(f"[NEW CONNECTION] {address} connected")
         self.add_peer(peer = address)
         message =  self.recieve_message(connection,address)
@@ -110,6 +114,7 @@ class Peer():
         print(response)
         self.id = response.get("id")
         
+    
     def process_message(self, mess):
         """
         process message from request and create action 
@@ -170,6 +175,7 @@ class Peer():
         else:
             pass
     
+   
     def response_action(self, connection, address, command):
         """
         make action from command send from process message
@@ -210,36 +216,11 @@ class Peer():
     def is_interested(self):
         return True
       
-    
-    def parse_metainfo(self, metainfo_path):
-        """
-        Giải mã tệp torrent (.torrent) và trả về dữ liệu dạng OrderedDict.
-        """
-
-        # Đảm bảo rằng metainfo_path là một chuỗi (đường dẫn tệp).
-        if not isinstance(metainfo_path, str):
-            print("Error: Expected a file path, but got a non-string type.")
-            return None
-
-        # Đọc và giải mã tệp torrent
-        try:
-            with open(metainfo_path, 'rb') as torrent_file:
-                metainfo_data = bencodepy.decode(torrent_file.read())
-            
-            # Kiểm tra nếu dữ liệu đã giải mã có trường 'info'
-            if 'info' not in metainfo_data:
-                print("Error: The torrent file is missing the 'info' section.")
-                return None
-            
-            # Trả về dữ liệu đã giải mã (OrderedDict)
-            return metainfo_data
-
-        except FileNotFoundError:
-            print(f"Error: The file '{metainfo_path}' was not found.")
-        except Exception as e:
-            print(f"An error occurred while parsing the metainfo file: {e}")
-
-        return None
+    def parse_metainfo(self, metainfo) -> dict:
+        with open(metainfo, "rb") as torrent:  # Mở file ở chế độ 'rb' (binary)
+            data = torrent.read()  # Đọc toàn bộ dữ liệu từ file
+            decoded_data = bencodepy.decode(data)  # Giải mã dữ liệu bencode
+            return decoded_data
     
     def add_peer(self, peer: tuple)-> None:
         with self.peer_list_semaphore:
@@ -248,7 +229,8 @@ class Peer():
                 self.peer_list.add(peer)
             except Exception as e:
                 print(e)
-                              
+                
+                
     def remove_peer(self,peer: tuple)-> None:
         with self.peer_list_semaphore:
             try:
@@ -267,6 +249,13 @@ class Peer():
             self.upload+= bytes
     
     def send_message(self,connection,mess: dict):
+        """
+        send message on connection to another peer
+
+        Args:
+            connection (socket): socket connection
+            mess (dict): message need send 
+        """
         message = json.dumps(mess)
         # print(f"[SEND MESSAGE]")
         message = message.encode("utf-8")
@@ -275,8 +264,19 @@ class Peer():
 
         connection.sendall(message_length)
         connection.sendall(message)
-              
+        
+        
     def recieve_message(self, connection, address= None) -> dict:
+        """
+        recieve message on connection from another peer
+
+        Args:
+            connection (socket): socket connection
+            address ((ip, port), optional): address of this connection host. Defaults to None.
+
+        Returns:
+            dict: message need recieve
+        """
         message_length = connection.recv(self.header_length).decode("utf-8")
         if not message_length:
             return None
@@ -293,6 +293,17 @@ class Peer():
         return json.loads(message)
     
     def send_file(self, connection,file_path,chunk= 1024):
+        """
+        send all data of file to other peer which is connected with
+
+        Args:
+            connection (socket): connnection to other peer
+            file_path (string): file path of file which need to send
+            chunk (int, optional): chunk size. Defaults to 512*1024 (521kB)
+        """
+        # with self.send_file_semaphore:
+        # sending file name
+
         message = {
             "file_name": file_path
         }
@@ -317,6 +328,14 @@ class Peer():
                 print(e)
         
     def recieve_file(self,connection, out_path,chunk=1024, test = 0):
+        """
+        recieve file from other peer which is connected with
+        Args:
+            connection (socket):connnection to other peer
+            out_path (str): file output path
+            chunk (int, optional): chunk size. Defaults to 512*1024 (521kB)
+            
+        """
         message = self.recieve_message(connection)
         file_name = message.get("file_name")
         print(f"[RECIEVING PIECE]:{file_name}")
@@ -350,7 +369,12 @@ class Peer():
     def recieve_list_pieces(self,connection,pieces_list, file_name,chunk) :
         for piece in pieces_list:
             self.recieve_file(connection,f"{self.pieces_storage}/{file_name}/{piece}",chunk)
-      
+    
+   
+
+ 
+                 
+        
     def get_peer_list_from_tracker(self, metainfo_path, tracker_ip, tracker_port):
         key =  create_hash_key_metainfo(metainfo_path)
         message = {
@@ -401,7 +425,8 @@ class Peer():
                 piece_hold_by_peers.append(element)
             peer_connnection.close()
         return piece_hold_by_peers
-      
+    
+        
     def plan_to_download(self,piece_hold_by_peers):
         piece_set = set()
         planned_download_per_peer = []
@@ -429,6 +454,7 @@ class Peer():
         
         return piece_hold_by_peers
     
+    
     def download_pieces(self,address, pieces_list, file_name, chunk = 1024):
         peer_connection =  socket.socket(socket.AF_INET,socket.SOCK_STREAM)
         peer_connection.connect(address)
@@ -442,7 +468,8 @@ class Peer():
         # with self.file_download_semaphore:
         self.send_message(peer_connection, message)
         self.recieve_list_pieces(peer_connection,pieces_list,file_name,chunk)
-                  
+        
+            
     def download_file(self,metainfo_path):
         metainfo = self.parse_metainfo(metainfo_path)
         annouce = metainfo.get("announce")
@@ -512,7 +539,10 @@ class Peer():
             print(f"[DOWNLOAD] Dont get full piece of {file_name} therefore cannot merge file")
             
         print("_______________________DONE___________________________________")
-           
+        
+        
+        
+        
     def download_files(self, metainfo_path_list):
         if isinstance(metainfo_path_list,str):
             if os.path.isdir(metainfo_path_list):
@@ -535,7 +565,9 @@ class Peer():
         
         for thread in thread_list:
             thread.join()
-      
+
+        
+        
     def upload_request(self,metainfo_hash,metainfo_name):
         request = {
             "type":"upload",
@@ -560,13 +592,21 @@ class Peer():
         # print(response.get("notification"))
         tracker_connection.close()
 
-    def upload_torrent(self,file_share,tracker_address): 
+    def upload_torrent(self,file_share,tracker_address):
+        # create meta info file
+        # + splite file to multiple pieces
+        # + create meta info file
+        # upload meta info file to tracker. 
         create_pieces_directory(file_share,self.pieces_storage)
         file_name = os.path.basename(file_share)
         file_name = file_name.split(".")[0] + ".torrent"
         output_path = f"{self.metainfo_storage}/{file_name}"
+        # print(file_name)
         metainfo_hash = create_torrent(file_share, f"{tracker_address[0]}:{tracker_address[1]}",output_path)
+        # print(str(metainfo_hash))
         self.upload_request(metainfo_hash,file_name)
+        # self.connect_to_tracker()
+   
    
     def upload_files(self,file_share_list,tracker_address):
         if isinstance(file_share_list,str):
@@ -590,7 +630,9 @@ class Peer():
         
         for thread in thread_list:
             thread.join()
-    
+
+       
+        
 #####################################################
 def upload_peer_test():
     peer = Peer(id=1,port = 4041,pieces_storage="pieces1",metainfo_storage="metainfo1")
@@ -602,6 +644,7 @@ def download_peer_test():
     peer = Peer(id=2,port = 4042,pieces_storage="pieces2")
     list_down = ["metainfo/walking.torrent.json","metainfo/test.torrent.json", "metainfo/meeting_1.torrent.json"]
     peer.download_files(list_down)
+    
 
 ################################################################################################
 def main():
@@ -673,6 +716,10 @@ def main():
         upload_thread.join()
         peer.run()
   
+    
+
+
+
 if __name__ == "__main__":
     # peer = Peer(
     #     port = 4041, 
